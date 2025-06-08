@@ -8,6 +8,23 @@ cfg_if! {
     // turns out that most NEON instructions have multi-cycle latency, which in
     // the end outweighs any gains over the generic implementation.
     if #[cfg(all(
+        target_feature = "avx512f",
+        target_feature = "avx512bw",
+        feature = "avx512",
+        any(target_arch = "x86", target_arch = "x86_64"),
+        not(miri),
+    ))] {
+        mod avx512;
+        use avx512 as imp;
+    } else if #[cfg(all(
+        target_feature = "avx2",
+        feature = "avx2",
+        any(target_arch = "x86", target_arch = "x86_64"),
+        not(miri),
+    ))] {
+        mod avx2;
+        use avx2 as imp;
+    } else if #[cfg(all(
         target_feature = "sse2",
         any(target_arch = "x86", target_arch = "x86_64"),
         not(miri),

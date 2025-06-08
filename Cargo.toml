@@ -72,6 +72,9 @@ default-hasher = ["dep:foldhash"]
 # time cost.
 inline-more = []
 
+avx2 = []
+avx512 = ["nightly"]
+
 [package.metadata.docs.rs]
 features = ["nightly", "rayon", "serde", "raw-entry"]
 rustdoc-args = ["--generate-link-to-definition"]

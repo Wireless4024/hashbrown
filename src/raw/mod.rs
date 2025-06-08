@@ -129,6 +129,13 @@ fn capacity_to_buckets(cap: usize, table_layout: TableLayout) -> Option<usize> {
         // This is brittle, e.g. if we ever add 32 byte groups, it will select
         // 3 regardless of the table_layout.size.
         let min_cap = match (Group::WIDTH, table_layout.size) {
+            (64, 0..=1) => 63,
+            (64, 2..=3) => 31,
+            (64, 5..=7) => 15,
+            (64, 8..=15) => 7,
+            (32, 0..=1) => 31,
+            (32, 2..=3) => 14,
+            (32, 4..=7) => 7,
             (16, 0..=1) => 14,
             (16, 2..=3) => 7,
             (8, 0..=1) => 7,
@@ -142,8 +149,12 @@ fn capacity_to_buckets(cap: usize, table_layout: TableLayout) -> Option<usize> {
             4
         } else if cap < 8 {
             8
-        } else {
+        } else if cap < 16 {
             16
+        } else if cap < 32 {
+            32
+        } else {
+            64
         });
     }
 
@@ -4186,6 +4197,9 @@ mod test_map {
         // This is only "small" for some platforms, like x86_64 with SSE2, but
         // there's no harm in running it on other platforms.
         test_t::<u16>();
+        test_t::<u32>();
+        test_t::<u64>();
+        test_t::<u128>();
     }
 
     fn rehash_in_place<T>(table: &mut RawTable<T>, hasher: impl Fn(&T) -> u64) {

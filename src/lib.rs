@@ -46,6 +46,10 @@
     all(feature = "nightly", target_arch = "loongarch64"),
     feature(stdarch_loongarch)
 )]
+#![cfg_attr(
+    all(feature = "avx512", target_arch = "x86_64"),
+    feature(stdarch_x86_avx512)
+)]
 
 /// Default hasher for [`HashMap`] and [`HashSet`].
 #[cfg(feature = "default-hasher")]

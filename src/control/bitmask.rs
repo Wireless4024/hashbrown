@@ -19,6 +19,7 @@ use super::group::{
 /// is set per element. This is done by applying `BITMASK_ITER_MASK` on the
 /// mask bits.
 #[derive(Copy, Clone)]
+#[repr(transparent)]
 pub(crate) struct BitMask(pub(crate) BitMaskWord);
 
 #[allow(clippy::use_self)]
