@@ -18,13 +18,14 @@ pub(crate) const BITMASK_ITER_MASK: BitMaskWord = !0;
 ///
 /// This implementation uses a 512-bit AVX value.
 #[derive(Copy, Clone)]
-pub(crate) struct Group(x86::__m256i);
+#[repr(transparent)]
+pub(crate) struct Group(x86::__m512i);
 
 #[allow(clippy::use_self)]
 impl Group {
     /// Number of bytes in the group.
-    pub(crate) const WIDTH: usize = mem::size_of::<Self>();
-    pub(crate) const ALIGN: usize = Group::WIDTH;
+    pub(crate) const WIDTH: usize = 32;
+    pub(crate) const ALIGN: usize = 64;
 
     /// Returns a full group of empty tags, suitable for use as the initial
     /// value for an empty hash table.
@@ -49,7 +50,7 @@ impl Group {
     #[inline]
     #[allow(clippy::cast_ptr_alignment)] // unaligned load
     pub(crate) unsafe fn load(ptr: *const Tag) -> Self {
-        Group(x86::_mm256_loadu_si256(ptr.cast()))
+        Group(x86::_mm512_loadu_si512(ptr.cast()))
     }
 
     /// Loads a group of tags starting at the given address, which must be
@@ -58,7 +59,7 @@ impl Group {
     #[allow(clippy::cast_ptr_alignment)]
     pub(crate) unsafe fn load_aligned(ptr: *const Tag) -> Self {
         debug_assert_eq!(ptr.align_offset(mem::align_of::<Self>()), 0);
-        Group(x86::_mm256_load_si256(ptr.cast()))
+        Group(x86::_mm512_load_si512(ptr.cast()))
     }
 
     /// Stores the group of tags to the given address, which must be
@@ -67,7 +68,7 @@ impl Group {
     #[allow(clippy::cast_ptr_alignment)]
     pub(crate) unsafe fn store_aligned(self, ptr: *mut Tag) {
         debug_assert_eq!(ptr.align_offset(mem::align_of::<Self>()), 0);
-        x86::_mm256_store_si256(ptr.cast(), self.0);
+        x86::_mm512_store_si512(ptr.cast(), self.0);
     }
 
     /// Returns a `BitMask` indicating all tags in the group which have
@@ -83,9 +84,7 @@ impl Group {
             clippy::cast_possible_truncation
         )]
         unsafe {
-            let cmp = x86::_mm256_cmpeq_epi8(self.0, x86::_mm256_set1_epi8(tag.0 as i8));
-            let mask = x86::_mm256_movemask_epi8(cmp) as u32;
-            BitMask(mask)
+            BitMask(x86::_mm512_cmpeq_epi16_mask(self.0, x86::_mm512_set1_epi16(tag.0 as i16)))
         }
     }
 
@@ -109,7 +108,7 @@ impl Group {
         )]
         unsafe {
             // A tag is EMPTY or DELETED iff the high bit is set
-            BitMask(x86::_mm256_movemask_epi8(self.0) as u32)
+            BitMask(x86::_mm512_movepi16_mask(self.0))
         }
     }
 
@@ -136,11 +135,12 @@ impl Group {
             clippy::cast_possible_wrap, // tag: Tag::DELETED.0 as i8
         )]
         unsafe {
-            let zero = x86::_mm256_setzero_si256();
-            let special = x86::_mm256_cmpgt_epi8(zero, self.0);
-            Group(x86::_mm256_or_si256(
+            let zero = x86::_mm512_setzero_si512();
+            let mask = x86::_mm512_cmpgt_epi16_mask(zero, self.0);
+            let special = x86::_mm512_maskz_mov_epi16(mask, x86::_mm512_set1_epi16(-1));
+            Group(x86::_mm512_or_si512(
                 special,
-                x86::_mm256_set1_epi8(Tag::DELETED.0 as i8),
+                x86::_mm512_set1_epi16(Tag::DELETED.0 as i16),
             ))
         }
     }

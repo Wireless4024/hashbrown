@@ -3,25 +3,26 @@ use core::{fmt, mem};
 /// Single tag in a control group.
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct Tag(pub(super) u8);
+pub(crate) struct Tag(pub(super) u16);
 impl Tag {
     /// Control tag value for an empty bucket.
-    pub(crate) const EMPTY: Tag = Tag(0b1111_1111);
+    pub(crate) const EMPTY: Tag = Tag(0b1111_1111_1111_1111);
 
     /// Control tag value for a deleted bucket.
-    pub(crate) const DELETED: Tag = Tag(0b1000_0000);
-    pub(crate) const BITS: usize = 7;
+    pub(crate) const DELETED: Tag = Tag(0b1000_0000_0000_0000);
+    
+    pub(crate) const BITS: usize = 15;
 
     /// Checks whether a control tag represents a full bucket (top bit is clear).
     #[inline]
     pub(crate) const fn is_full(self) -> bool {
-        self.0 & 0x80 == 0
+        self.0 & 0x8000 == 0
     }
 
     /// Checks whether a control tag represents a special value (top bit is set).
     #[inline]
     pub(crate) const fn is_special(self) -> bool {
-        self.0 & 0x80 != 0
+        self.0 & 0x8000 != 0
     }
 
     /// Checks whether a special control value is EMPTY (just check 1 bit).
@@ -35,19 +36,17 @@ impl Tag {
     #[inline]
     #[allow(clippy::cast_possible_truncation)]
     pub(crate) const fn full(hash: u64) -> Tag {
-        // Constant for function that grabs the top 7 bits of the hash.
+        // Constant for function that grabs the top 15 bits of the hash.
         const MIN_HASH_LEN: usize = if mem::size_of::<usize>() < mem::size_of::<u64>() {
             mem::size_of::<usize>()
         } else {
             mem::size_of::<u64>()
         };
 
-        // Grab the top 7 bits of the hash. While the hash is normally a full 64-bit
-        // value, some hash functions (such as FxHash) produce a usize result
-        // instead, which means that the top 32 bits are 0 on 32-bit platforms.
-        // So we use MIN_HASH_LEN constant to handle this.
-        let top7 = hash >> (MIN_HASH_LEN * 8 - Tag::BITS);
-        Tag((top7 & 0x7f) as u8) // truncation
+        // Grab the top 15 bits of the hash. While the hash is normally a full 64-bit
+        // value.
+        let top15 = hash >> (MIN_HASH_LEN * 8 - Tag::BITS);
+        Tag((top15 & 0x7fff) as u16) // truncation
     }
 }
 impl fmt::Debug for Tag {
@@ -59,7 +58,7 @@ impl fmt::Debug for Tag {
                 f.pad("DELETED")
             }
         } else {
-            f.debug_tuple("full").field(&(self.0 & 0x7F)).finish()
+            f.debug_tuple("full").field(&(self.0 & 0x7FFF)).finish()
         }
     }
 }
@@ -75,10 +74,17 @@ pub(crate) trait TagSliceExt {
         self.fill_tag(Tag::EMPTY)
     }
 }
+
 impl TagSliceExt for [Tag] {
     #[inline]
     fn fill_tag(&mut self, tag: Tag) {
+        self.fill(tag)
+    }
+
+    #[inline]
+    fn fill_empty(&mut self) {
         // SAFETY: We have access to the entire slice, so, we can write to the entire slice.
-        unsafe { self.as_mut_ptr().write_bytes(tag.0, self.len()) }
+        //unsafe { self.as_mut_ptr().cast::<u8>().write_bytes(0xFF, size_of_val(self)) }
+        self.fill_tag(Tag::EMPTY)
     }
 }

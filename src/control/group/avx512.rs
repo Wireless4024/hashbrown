@@ -25,6 +25,7 @@ pub(crate) struct Group(x86::__m512i);
 impl Group {
     /// Number of bytes in the group.
     pub(crate) const WIDTH: usize = mem::size_of::<Self>();
+    pub(crate) const ALIGN: usize = Group::WIDTH;
 
     /// Returns a full group of empty tags, suitable for use as the initial
     /// value for an empty hash table.

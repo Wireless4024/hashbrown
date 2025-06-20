@@ -25,13 +25,13 @@ pub(crate) type NonZeroBitMaskWord = NonZeroGroupWord;
 pub(crate) const BITMASK_STRIDE: usize = 8;
 // We only care about the highest bit of each tag for the mask.
 #[allow(clippy::cast_possible_truncation, clippy::unnecessary_cast)]
-pub(crate) const BITMASK_MASK: BitMaskWord = u64::from_ne_bytes([Tag::DELETED.0; 8]) as GroupWord;
+pub(crate) const BITMASK_MASK: BitMaskWord = repeat(Tag::DELETED);
 pub(crate) const BITMASK_ITER_MASK: BitMaskWord = !0;
 
 /// Helper function to replicate a tag across a `GroupWord`.
 #[inline]
-fn repeat(tag: Tag) -> GroupWord {
-    GroupWord::from_ne_bytes([tag.0; Group::WIDTH])
+const fn repeat(tag: Tag) -> GroupWord {
+    GroupWord::from_ne_bytes(unsafe { mem::transmute([tag.0, tag.0, tag.0, tag.0]) })
 }
 
 /// Abstraction over a group of control tags which can be scanned in
@@ -48,8 +48,8 @@ pub(crate) struct Group(GroupWord);
 #[allow(clippy::use_self)]
 impl Group {
     /// Number of bytes in the group.
-    pub(crate) const WIDTH: usize = mem::size_of::<Self>();
-    pub(crate) const ALIGN: usize = Group::WIDTH;
+    pub(crate) const WIDTH: usize = mem::size_of::<Self>() / 2;
+    pub(crate) const ALIGN: usize = mem::align_of::<Self>();
 
     /// Returns a full group of empty tags, suitable for use as the initial
     /// value for an empty hash table.
@@ -150,6 +150,6 @@ impl Group {
         //   !1000_0000 + 1 = 0111_1111 + 1 = 1000_0000 (no carry)
         //   !0000_0000 + 0 = 1111_1111 + 0 = 1111_1111 (no carry)
         let full = !self.0 & repeat(Tag::DELETED);
-        Group(!full + (full >> 7))
+        Group(!full + (full >> 15))
     }
 }

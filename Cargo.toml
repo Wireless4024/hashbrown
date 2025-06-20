@@ -42,7 +42,7 @@ doc-comment = "0.3.1"
 bumpalo = { version = "3.13.0", features = ["allocator-api2"] }
 
 [features]
-default = ["default-hasher", "inline-more", "allocator-api2", "equivalent", "raw-entry"]
+default = ["default-hasher", "inline-more", "allocator-api2", "equivalent", "raw-entry", "avx512", "nightly", "tag16"]
 
 # Enables use of nightly features. This is only guaranteed to work on the latest
 # version of nightly Rust.
@@ -72,7 +72,13 @@ default-hasher = ["dep:foldhash"]
 # time cost.
 inline-more = []
 
+# Use 16 bits tag instead of 8 by default
+tag16 = []
+
+# Enable avx2 tag lookup
 avx2 = []
+
+# Enable avx512 tag lookup
 avx512 = ["nightly"]
 
 [package.metadata.docs.rs]

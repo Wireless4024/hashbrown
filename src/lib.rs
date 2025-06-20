@@ -9,7 +9,7 @@
 //! [here]: https://github.com/abseil/abseil-cpp/blob/master/absl/container/internal/raw_hash_set.h
 //! [CppCon talk]: https://www.youtube.com/watch?v=ncHmEUmJZf4
 
-#![no_std]
+//#![no_std]
 #![cfg_attr(
     feature = "nightly",
     feature(
@@ -74,7 +74,13 @@ doc_comment::doctest!("../README.md");
 #[macro_use]
 mod macros;
 
+#[cfg(not(feature = "tag16"))]
 mod control;
+
+#[cfg(feature = "tag16")]
+mod control16;
+#[cfg(feature = "tag16")]
+use control16 as control;
 mod raw;
 mod util;
 

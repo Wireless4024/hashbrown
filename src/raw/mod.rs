@@ -128,6 +128,7 @@ fn capacity_to_buckets(cap: usize, table_layout: TableLayout) -> Option<usize> {
 
         // This is brittle, e.g. if we ever add 32 byte groups, it will select
         // 3 regardless of the table_layout.size.
+        #[cfg(not(feature = "tag16"))]
         let min_cap = match (Group::WIDTH, table_layout.size) {
             (64, 0..=1) => 63,
             (64, 2..=3) => 31,
@@ -140,6 +141,12 @@ fn capacity_to_buckets(cap: usize, table_layout: TableLayout) -> Option<usize> {
             (16, 2..=3) => 7,
             (8, 0..=1) => 7,
             _ => 3,
+        };
+        #[cfg(feature = "tag16")]
+        let min_cap = match (Group::WIDTH, table_layout.size) {
+            (32, 0..=1) => 31,
+            //(32, 2..=3) => 15,
+            _ => 15,
         };
         let cap = min_cap.max(cap);
         // We don't bother with a table size of 2 buckets since that can only
@@ -198,10 +205,10 @@ impl TableLayout {
         let layout = Layout::new::<T>();
         Self {
             size: layout.size(),
-            ctrl_align: if layout.align() > Group::WIDTH {
+            ctrl_align: if layout.align() > Group::ALIGN {
                 layout.align()
             } else {
-                Group::WIDTH
+                Group::ALIGN
             },
         }
     }
@@ -214,7 +221,7 @@ impl TableLayout {
         // Manual layout calculation since Layout methods are not yet stable.
         let ctrl_offset =
             size.checked_mul(buckets)?.checked_add(ctrl_align - 1)? & !(ctrl_align - 1);
-        let len = ctrl_offset.checked_add(buckets + Group::WIDTH)?;
+        let len = ctrl_offset.checked_add((buckets + Group::WIDTH) * size_of::<Tag>())?;
 
         // We need an additional check to ensure that the allocation doesn't
         // exceed `isize::MAX` (https://github.com/rust-lang/rust/pull/95295).
@@ -610,7 +617,7 @@ struct RawTableInner {
 
     // [Padding], T_n, ..., T1, T0, C0, C1, ...
     //                              ^ points here
-    ctrl: NonNull<u8>,
+    ctrl: NonNull<Tag>,
 
     // Number of elements that can be inserted before we need to grow the table
     growth_left: usize,
@@ -1337,7 +1344,7 @@ impl<T, A: Allocator> RawTable<T, A> {
 
     /// Returns an iterator over occupied buckets that could match a given hash.
     ///
-    /// `RawTable` only stores 7 bits of the hash value, so this iterator may
+    /// `RawTable` only stores [Tag::BITS] bits of the hash value, so this iterator may
     /// return items that have a hash value different than the one provided. You
     /// should always validate the returned values before using them.
     ///
@@ -1490,7 +1497,7 @@ impl RawTableInner {
         };
 
         // SAFETY: null pointer will be caught in above check
-        let ctrl = NonNull::new_unchecked(ptr.as_ptr().add(ctrl_offset));
+        let ctrl = NonNull::new_unchecked(ptr.as_ptr().add(ctrl_offset)).cast();
         Ok(Self {
             ctrl,
             bucket_mask: buckets - 1,
@@ -1605,7 +1612,7 @@ impl RawTableInner {
     unsafe fn fix_insert_slot(&self, mut index: usize) -> InsertSlot {
         // SAFETY: The caller of this function ensures that `index` is in the range `0..=self.bucket_mask`.
         if unlikely(self.is_bucket_full(index)) {
-            debug_assert!(self.bucket_mask < Group::WIDTH);
+            debug_assert!(self.bucket_mask < Group::ALIGN, "mask {}, width {}", self.bucket_mask, Group::ALIGN);
             // SAFETY:
             //
             // * Since the caller of this function ensures that the control bytes are properly
@@ -2063,7 +2070,7 @@ impl RawTableInner {
         let data = Bucket::from_base_index(self.data_end(), 0);
         RawIter {
             // SAFETY: See explanation above
-            iter: RawIterRange::new(self.ctrl.as_ptr(), data, self.buckets()),
+            iter: RawIterRange::new(self.ctrl.as_ptr().cast(), data, self.buckets()),
             items: self.items,
         }
     }
@@ -2238,7 +2245,7 @@ impl RawTableInner {
     #[inline]
     unsafe fn bucket<T>(&self, index: usize) -> Bucket<T> {
         debug_assert_ne!(self.bucket_mask, 0);
-        debug_assert!(index < self.buckets());
+        debug_assert!(index < self.buckets(), "index {} out of bounds {} buckets", index, self.buckets());
         Bucket::from_base_index(self.data_end(), index)
     }
 
@@ -2517,15 +2524,15 @@ impl RawTableInner {
     /// [`Undefined Behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
     #[inline]
     unsafe fn ctrl(&self, index: usize) -> *mut Tag {
-        debug_assert!(index < self.num_ctrl_bytes());
+        debug_assert!(index < self.num_ctrl());
         // SAFETY: The caller must uphold the safety rules for the [`RawTableInner::ctrl`]
-        self.ctrl.as_ptr().add(index).cast()
+        self.ctrl.as_ptr().cast::<Tag>().add(index)
     }
 
     /// Gets the slice of all control bytes.
     fn ctrl_slice(&mut self) -> &mut [Tag] {
         // SAFETY: We've intiailized all control bytes, and have the correct number.
-        unsafe { slice::from_raw_parts_mut(self.ctrl.as_ptr().cast(), self.num_ctrl_bytes()) }
+        unsafe { slice::from_raw_parts_mut(self.ctrl.as_ptr().cast(), self.num_ctrl()) }
     }
 
     #[inline]
@@ -2546,7 +2553,12 @@ impl RawTableInner {
 
     #[inline]
     fn num_ctrl_bytes(&self) -> usize {
-        self.bucket_mask + 1 + Group::WIDTH
+        (self.bucket_mask + 1 + Group::WIDTH)* size_of::<Tag>()
+    }
+
+    #[inline]
+    fn num_ctrl(&self) -> usize {
+        self.num_ctrl_bytes() / size_of::<Tag>()
     }
 
     #[inline]
@@ -2721,7 +2733,7 @@ impl RawTableInner {
         //
         // where: T0...T_n  - our stored data;
         //        CT0...CT_n - control bytes or metadata for `data`.
-        let ctrl = NonNull::new_unchecked(self.ctrl(0).cast::<u8>());
+        let ctrl = NonNull::new_unchecked(self.ctrl(0));
 
         FullBucketsIndices {
             // Load the first group
@@ -3027,7 +3039,7 @@ impl RawTableInner {
         };
         (
             // SAFETY: The caller must uphold the safety contract for `allocation_info` method.
-            unsafe { NonNull::new_unchecked(self.ctrl.as_ptr().sub(ctrl_offset)) },
+            unsafe { NonNull::new_unchecked(self.ctrl.as_ptr().cast::<u8>().sub(ctrl_offset)) },
             layout,
         )
     }
@@ -3283,7 +3295,7 @@ impl<T: Copy, A: Allocator + Clone> RawTableClone for RawTable<T, A> {
         source
             .table
             .ctrl(0)
-            .copy_to_nonoverlapping(self.table.ctrl(0), self.table.num_ctrl_bytes());
+            .copy_to_nonoverlapping(self.table.ctrl(0), self.table.num_ctrl());
         source
             .data_start()
             .as_ptr()
@@ -3305,7 +3317,7 @@ impl<T: Clone, A: Allocator + Clone> RawTable<T, A> {
         source
             .table
             .ctrl(0)
-            .copy_to_nonoverlapping(self.table.ctrl(0), self.table.num_ctrl_bytes());
+            .copy_to_nonoverlapping(self.table.ctrl(0), self.table.num_ctrl());
 
         // The cloning of elements may panic, in which case we need
         // to make sure we drop only the elements that have been
@@ -3404,10 +3416,10 @@ pub(crate) struct RawIterRange<T> {
 
     // Pointer to the next group of control bytes,
     // Must be aligned to the group size.
-    next_ctrl: *const u8,
+    next_ctrl: *const Tag,
 
     // Pointer one past the last control byte of this range.
-    end: *const u8,
+    end: *const Tag,
 }
 
 impl<T> RawIterRange<T> {
@@ -3438,9 +3450,9 @@ impl<T> RawIterRange<T> {
     /// [valid]: https://doc.rust-lang.org/std/ptr/index.html#safety
     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
     #[cfg_attr(feature = "inline-more", inline)]
-    unsafe fn new(ctrl: *const u8, data: Bucket<T>, len: usize) -> Self {
+    unsafe fn new(ctrl: *const Tag, data: Bucket<T>, len: usize) -> Self {
         debug_assert_ne!(len, 0);
-        debug_assert_eq!(ctrl as usize % Group::WIDTH, 0);
+        debug_assert_eq!(ctrl as usize % Group::ALIGN, 0);
         // SAFETY: The caller must uphold the safety rules for the [`RawIterRange::new`]
         let end = ctrl.add(len);
 
@@ -3761,7 +3773,7 @@ pub(crate) struct FullBucketsIndices {
 
     // Pointer to the current group of control bytes,
     // Must be aligned to the group size (Group::WIDTH).
-    ctrl: NonNull<u8>,
+    ctrl: NonNull<Tag>,
 
     // Number of elements in the table.
     items: usize,
@@ -3814,7 +3826,7 @@ impl FullBucketsIndices {
             self.ctrl = NonNull::new_unchecked(self.ctrl.as_ptr().add(Group::WIDTH));
 
             // SAFETY: See explanation above.
-            self.current_group = Group::load_aligned(self.ctrl.as_ptr().cast())
+            self.current_group = Group::load_aligned(self.ctrl.as_ptr())
                 .match_full()
                 .into_iter();
             self.group_first_index += Group::WIDTH;
@@ -4017,7 +4029,7 @@ impl<T, A: Allocator> FusedIterator for RawDrain<'_, T, A> {}
 
 /// Iterator over occupied buckets that could match a given hash.
 ///
-/// `RawTable` only stores 7 bits of the hash value, so this iterator may return
+/// `RawTable` only stores [Tag::BITS] bits of the hash value, so this iterator may return
 /// items that have a hash value different than the one provided. You should
 /// always validate the returned values before using them.
 ///
@@ -4042,9 +4054,9 @@ struct RawIterHashInner {
     // We can't store a `*const RawTableInner` as it would get
     // invalidated by the user calling `&mut` methods on `RawTable`.
     bucket_mask: usize,
-    ctrl: NonNull<u8>,
+    ctrl: NonNull<Tag>,
 
-    // The top 7 bits of the hash.
+    /// The top [Tag::BITS] bits of the hash.
     tag_hash: Tag,
 
     // The sequence of groups to probe in the search.
@@ -4144,7 +4156,7 @@ impl Iterator for RawIterHashInner {
                 // an actual `RawTableInner` reference to use.
                 let index = self.probe_seq.pos;
                 debug_assert!(index < self.bucket_mask + 1 + Group::WIDTH);
-                let group_ctrl = self.ctrl.as_ptr().add(index).cast();
+                let group_ctrl = self.ctrl.as_ptr().add(index);
 
                 self.group = Group::load(group_ctrl);
                 self.bitmask = self.group.match_tag(self.tag_hash).into_iter();
@@ -4378,7 +4390,7 @@ mod test_map {
             }),
         });
 
-        for (idx, panic_in_clone) in core::iter::repeat(DISARMED).take(7).enumerate() {
+        for (idx, panic_in_clone) in core::iter::repeat(DISARMED).take(Tag::BITS).enumerate() {
             let idx = idx as u64;
             table.insert(
                 idx,
@@ -4394,7 +4406,7 @@ mod test_map {
             );
         }
 
-        assert_eq!(table.len(), 7);
+        assert_eq!(table.len(), Tag::BITS);
 
         thread::scope(|s| {
             let result = s.spawn(|| {
