@@ -729,6 +729,61 @@ impl<T, A: Allocator> RawTable<T, A> {
         self.table.ctrl.cast()
     }
 
+
+    /// Merges the contents of `table2` into `table1`.
+    ///
+    /// - `hasher`: A function that computes the hash of an element.
+    /// - `key_eq`: A function that compares two elements for key equality.
+    /// - `combine`: A function that combines the value of an existing element
+    ///   in `table1` with the value of an element from `table2`.
+    #[inline]
+    pub fn drain_from<H, KE, C>(
+        &mut self,
+        table2: &mut Self,
+        hasher: H,
+        key_eq: KE,
+        combine: C,
+    )
+    where
+        A: Allocator,
+        H: Fn(&T) -> u64,
+        KE: Fn(&T, &T) -> bool,
+        C: Fn(&mut T, T),
+    {
+        // Reserve capacity in the first table to avoid multiple reallocations.
+        self.reserve(table2.len(), &hasher);
+
+        // Iterate over the second table and drain it.
+        for item_from_table2 in table2.drain()  {
+            let hash = hasher(&item_from_table2);
+
+            // Find if a corresponding element exists in the first table.
+            let find_result = self.find_or_find_insert_slot(
+                hash,
+                |item_from_table1| key_eq(item_from_table1, &item_from_table2),
+                &hasher,
+            );
+
+            match find_result {
+                Ok(bucket) => {
+                    // Key already exists.
+                    // We combine the new value with the existing one.
+                    unsafe {
+                        combine(bucket.as_mut(), item_from_table2);
+                    }
+                }
+                Err(slot) => {
+                    // Key doesn't exist.
+                    // We insert the new element into the found slot.
+                    unsafe {
+                        self.insert_in_slot(hash, slot, item_from_table2);
+                    }
+                }
+            }
+        }
+    }
+
+
     /// Returns pointer to start of data table.
     #[inline]
     #[cfg(feature = "nightly")]
@@ -1690,7 +1745,7 @@ impl RawTableInner {
     unsafe fn find_or_find_insert_slot_inner(
         &self,
         hash: u64,
-        eq: &mut dyn FnMut(usize) -> bool,
+        eq: &mut impl FnMut(usize) -> bool,
     ) -> Result<usize, InsertSlot> {
         let mut insert_slot = None;
 
@@ -2639,7 +2694,7 @@ impl RawTableInner {
         &mut self,
         alloc: &A,
         additional: usize,
-        hasher: &dyn Fn(&mut Self, usize) -> u64,
+        hasher: &impl Fn(&mut Self, usize) -> u64,
         fallibility: Fallibility,
         layout: TableLayout,
         drop: Option<unsafe fn(*mut u8)>,
@@ -2781,7 +2836,7 @@ impl RawTableInner {
         &mut self,
         alloc: &A,
         capacity: usize,
-        hasher: &dyn Fn(&mut Self, usize) -> u64,
+        hasher: &impl Fn(&mut Self, usize) -> u64,
         fallibility: Fallibility,
         layout: TableLayout,
     ) -> Result<(), TryReserveError>
@@ -2876,7 +2931,7 @@ impl RawTableInner {
     #[cfg_attr(not(feature = "inline-more"), inline)]
     unsafe fn rehash_in_place(
         &mut self,
-        hasher: &dyn Fn(&mut Self, usize) -> u64,
+        hasher: &impl Fn(&mut Self, usize) -> u64,
         size_of: usize,
         drop: Option<unsafe fn(*mut u8)>,
     ) {

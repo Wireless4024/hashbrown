@@ -1073,6 +1073,15 @@ where
     S: BuildHasher,
     A: Allocator,
 {
+    /// Drain values from other map with combine function
+    #[inline]
+    pub fn drain_from(&mut self, other: &mut Self, combine: impl Fn(&mut V, V)) {
+        self.table.drain_from(&mut other.table,
+                              make_hasher::<_, V, S>(&self.hash_builder),
+                              |left, right| left.0 == right.0,
+                              |left, right| combine(&mut left.1, right.1),
+        )
+    }
     /// Reserves capacity for at least `additional` more elements to be inserted
     /// in the `HashMap`. The collection may reserve more space to avoid
     /// frequent reallocations.
