@@ -19,7 +19,7 @@ fn merge_iter(b: &mut Bencher) {
     }
     let mut intersect_map = HashMap::new();
     for key in &intersect {
-        intersect_map.insert(*key, std::hint::black_box(N - *key));   
+        intersect_map.insert(*key, std::hint::black_box(N - *key));
     }
     b.iter(|| {
         let mut base = map.clone();
@@ -27,6 +27,8 @@ fn merge_iter(b: &mut Bencher) {
         for (k, v) in intersect_map {
             *base.entry(k).or_default() += v;
         }
+        let base = std::hint::black_box(base);
+        assert_eq!(base.len(), N as _);
     });
 }
 
@@ -46,5 +48,7 @@ fn merge_helper(b: &mut Bencher) {
         let mut base = map.clone();
         let mut intersect_map = intersect_map.clone();
         base.drain_from(&mut intersect_map, |left, right| *left += right);
+        let base = std::hint::black_box(base);
+        assert_eq!(base.len(), N as _);
     });
 }
